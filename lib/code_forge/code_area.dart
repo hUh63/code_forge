@@ -272,6 +272,9 @@ class CodeForge extends StatefulWidget {
   /// inserting a newline (only when the suggestion popup is open).
   final bool enterSuggestion;
 
+  /// Overrides the maximum height of the suggestion popup.
+  final double? suggestionMaxHeight;
+
   /// Whether to wrap long lines.
   ///
   /// When true, lines wrap at the editor boundary. When false,
@@ -384,6 +387,7 @@ class CodeForge extends StatefulWidget {
     this.readOnly = false,
     this.autoIndent = true,
     this.enterSuggestion = false,
+    this.suggestionMaxHeight,
     this.autoFocus = false,
     this.lineWrap = false,
     this.enableFolding = true,
@@ -567,6 +571,7 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
         widget.suggestionStyle ??
         SuggestionStyle(
           elevation: 8,
+          maxHeight: widget.suggestionMaxHeight ?? 400,
           textStyle: (() {
             TextStyle style = widget.textStyle ?? TextStyle();
             if (style.color == null) {
