@@ -104,6 +104,16 @@ class CodeForgeController implements DeltaTextInputClient {
   /// 并按返回的先后顺序排列。回调抛异常时会被忽略，不影响补全本身。
   LocalSuggestionsProvider? contextSuggestionProvider;
 
+  /// 宿主回调：用户从补全弹窗里选中了一条候选。
+  ///
+  /// [accepted] 是被接受的文本，[prefix] 是接受那一刻正在输入的词
+  /// （「无输入联想」时为空串）。宿主可以据此在本地做候选排序学习——
+  /// 哪些词是这个人真的会用的，下次就往前排。
+  void Function(String accepted, String prefix)? onSuggestionAccepted;
+
+  /// 本轮补全所用的前缀（无输入联想时为空串），供 [onSuggestionAccepted] 回传。
+  String _suggestionPrefix = '';
+
   /// 记录本轮上下文候选的优先级（值越小越靠前）。仅在单轮补全内有效。
   final Map<String, int> _contextualRank = <String, int>{};
   List<InlayHint> _inlayHints = [];
@@ -330,6 +340,7 @@ class CodeForgeController implements DeltaTextInputClient {
                   .toList();
             }
             _sortSuggestions(prefix);
+            _suggestionPrefix = prefix;
             final triggerChar = text[cursorPosition - 1];
             final isTriggerChar = _isCompletionTriggerChar(triggerChar);
             final isAlphaChar = _isAlpha(triggerChar);
@@ -1203,6 +1214,12 @@ class CodeForgeController implements DeltaTextInputClient {
 
     suggestionsNotifier.value = null;
     currentlySelectedSuggestion = 0;
+    // 通知宿主「用户真的用了这条」——宿主可据此在本地累计使用频次。
+    try {
+      onSuggestionAccepted?.call(insertText, _suggestionPrefix);
+    } catch (_) {
+      // 宿主回调异常不应影响补全本身。
+    }
   }
 
   String _extractSuggestionText(dynamic suggestion) {
