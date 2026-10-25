@@ -333,12 +333,30 @@ class CodeForgeController implements DeltaTextInputClient {
             final triggerChar = text[cursorPosition - 1];
             final isTriggerChar = _isCompletionTriggerChar(triggerChar);
             final isAlphaChar = _isAlpha(triggerChar);
+            // 「无输入联想」：宿主注入了上下文候选（contextSuggestionProvider）时，
+            // 换行 / 开括号 / 逗号 / 等号 / 分号之后也弹窗——这时 prefix 为空，
+            // 候选完全由宿主按上下文给出（上一行结构、缩进层级、文档里的高频行首词）。
+            final isContextualTrigger = contextSuggestionProvider != null &&
+                prefix.isEmpty &&
+                _suggestions.isNotEmpty &&
+                (triggerChar == '\n' ||
+                    triggerChar == '(' ||
+                    triggerChar == '{' ||
+                    triggerChar == '[' ||
+                    triggerChar == ',' ||
+                    triggerChar == '=' ||
+                    triggerChar == ';');
 
-            if (!isTriggerChar && !isAlphaChar) {
+            if (!isTriggerChar && !isAlphaChar && !isContextualTrigger) {
               if (!_isDisposed) suggestionsNotifier.value = null;
               return;
             }
-            if (!_isDisposed) suggestionsNotifier.value = _suggestions;
+            if (!_isDisposed) {
+              // prefix 为空时全量候选（几百个关键字）会淹没上下文候选，只留前 30 条。
+              suggestionsNotifier.value = prefix.isEmpty && _suggestions.length > 30
+                  ? _suggestions.take(30).toList()
+                  : _suggestions;
+            }
           } else {
             if (!_isDisposed) suggestionsNotifier.value = null;
           }
