@@ -275,102 +275,8 @@ class CodeForgeController implements DeltaTextInputClient {
       _listeners.add(() async {
         if (!enableLocalSuggestions) return;
         _debounceTimer?.cancel();
-        _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
-          if (text != _previousValue) {
-            _wordCache = await _extractWords();
-          }
-          _previousValue = text;
-          _prevSelection = selection;
-
-          final cursorPosition = selection.extentOffset;
-          final prefix = getCurrentWordPrefix(text, cursorPosition);
-          if (_isTyping && selection.extentOffset > 0) {
-            String currentWord = '';
-            if (text.isNotEmpty) {
-              final match = RegExp(
-                r'[\w\u0600-\u06FF\u08A0-\u08FF\u0590-\u05FF]+$',
-              ).firstMatch(text.substring(0, cursorPosition));
-              if (match != null) {
-                currentWord = match.group(0)!;
-              }
-            }
-
-            _suggestions.clear();
-            _contextualRank.clear();
-
-            for (final i in _wordCache) {
-              if (!_suggestions.contains(i) && i != currentWord) {
-                _suggestions.add(i);
-              }
-            }
-            // 宿主注入的额外候选（语言关键字等），与文档词一起参与补全。
-            for (final i in extraSuggestions) {
-              if (!_suggestions.contains(i) && i != currentWord) {
-                _suggestions.add(i);
-              }
-            }
-            // 宿主注入的「上下文感知」候选：按当前光标场景（JSON key、XML 标签、
-            // 缩进层级 等）动态生成，优先级高于普通候选，且保持宿主给出的顺序。
-            final contextualProvider = contextSuggestionProvider;
-            if (contextualProvider != null) {
-              try {
-                final contextual = contextualProvider(
-                  LocalSuggestionContext(
-                    documentText: text,
-                    linePrefix: _linePrefixAt(text, cursorPosition),
-                    prefix: prefix,
-                    cursorOffset: cursorPosition,
-                  ),
-                );
-                var contextualRank = 0;
-                for (final i in contextual) {
-                  if (i.isEmpty || i == currentWord) continue;
-                  _contextualRank.putIfAbsent(i, () => contextualRank++);
-                  if (!_suggestions.contains(i)) {
-                    _suggestions.add(i);
-                  }
-                }
-              } catch (_) {
-                // 宿主回调异常不应影响补全本身。
-              }
-            }
-            if (prefix.isNotEmpty) {
-              _suggestions = _suggestions
-                  .where((s) => s.startsWith(prefix))
-                  .toList();
-            }
-            _sortSuggestions(prefix);
-            _suggestionPrefix = prefix;
-            final triggerChar = text[cursorPosition - 1];
-            final isTriggerChar = _isCompletionTriggerChar(triggerChar);
-            final isAlphaChar = _isAlpha(triggerChar);
-            // 「无输入联想」：宿主注入了上下文候选（contextSuggestionProvider）时，
-            // 换行 / 开括号 / 逗号 / 等号 / 分号之后也弹窗——这时 prefix 为空，
-            // 候选完全由宿主按上下文给出（上一行结构、缩进层级、文档里的高频行首词）。
-            final isContextualTrigger = contextSuggestionProvider != null &&
-                prefix.isEmpty &&
-                _suggestions.isNotEmpty &&
-                (triggerChar == '\n' ||
-                    triggerChar == '(' ||
-                    triggerChar == '{' ||
-                    triggerChar == '[' ||
-                    triggerChar == ',' ||
-                    triggerChar == '=' ||
-                    triggerChar == ';');
-
-            if (!isTriggerChar && !isAlphaChar && !isContextualTrigger) {
-              if (!_isDisposed) suggestionsNotifier.value = null;
-              return;
-            }
-            if (!_isDisposed) {
-              // prefix 为空时全量候选（几百个关键字）会淹没上下文候选，只留前 30 条。
-              suggestionsNotifier.value = prefix.isEmpty && _suggestions.length > 30
-                  ? _suggestions.take(30).toList()
-                  : _suggestions;
-            }
-          } else {
-            if (!_isDisposed) suggestionsNotifier.value = null;
-          }
+        _debounceTimer = Timer(const Duration(milliseconds: 200), () {
+          unawaited(_runLocalSuggestions());
         });
       });
     }
@@ -5002,6 +4908,121 @@ class CodeForgeController implements DeltaTextInputClient {
         return 'macro';
       default:
         return 'unknown';
+    }
+  }
+
+  /// 让宿主在「文本没变、只是光标动了」时也能重新弹补全。
+  ///
+  /// 典型场景：补全弹窗弹出后点了别处，再点回原来那行——这时文本没变、键盘没在
+  /// 打字，原来的实现只在「文本变化」时才重建候选，于是弹窗再也不出现了。
+  void requestSuggestions() {
+    if (!enableLocalSuggestions) return;
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 80), () {
+      unawaited(_runLocalSuggestions(force: true));
+    });
+  }
+
+  /// 重建本地补全候选。[force] 为 true 时忽略「正在输入」判断。
+  Future<void> _runLocalSuggestions({bool force = false}) async {
+    if (text != _previousValue) {
+      _wordCache = await _extractWords();
+    }
+    _previousValue = text;
+    _prevSelection = selection;
+
+    final cursorPosition = selection.extentOffset;
+    final prefix = getCurrentWordPrefix(text, cursorPosition);
+    if ((_isTyping || force) && selection.extentOffset > 0) {
+      String currentWord = '';
+      if (text.isNotEmpty) {
+        final match = RegExp(
+          r'[\w\u0600-\u06FF\u08A0-\u08FF\u0590-\u05FF]+$',
+        ).firstMatch(text.substring(0, cursorPosition));
+        if (match != null) {
+          currentWord = match.group(0)!;
+        }
+      }
+
+      _suggestions.clear();
+      _contextualRank.clear();
+
+      for (final i in _wordCache) {
+        if (!_suggestions.contains(i) && i != currentWord) {
+          _suggestions.add(i);
+        }
+      }
+      // 宿主注入的额外候选（语言关键字等），与文档词一起参与补全。
+      for (final i in extraSuggestions) {
+        if (!_suggestions.contains(i) && i != currentWord) {
+          _suggestions.add(i);
+        }
+      }
+      // 宿主注入的「上下文感知」候选：按当前光标场景（JSON key、XML 标签、
+      // 缩进层级 等）动态生成，优先级高于普通候选，且保持宿主给出的顺序。
+      final contextualProvider = contextSuggestionProvider;
+      if (contextualProvider != null) {
+        try {
+          final contextual = contextualProvider(
+            LocalSuggestionContext(
+              documentText: text,
+              linePrefix: _linePrefixAt(text, cursorPosition),
+              prefix: prefix,
+              cursorOffset: cursorPosition,
+            ),
+          );
+          var contextualRank = 0;
+          for (final i in contextual) {
+            if (i.isEmpty || i == currentWord) continue;
+            _contextualRank.putIfAbsent(i, () => contextualRank++);
+            if (!_suggestions.contains(i)) {
+              _suggestions.add(i);
+            }
+          }
+        } catch (_) {
+          // 宿主回调异常不应影响补全本身。
+        }
+      }
+      if (prefix.isNotEmpty) {
+        _suggestions = _suggestions.where((s) {
+        // 大小写不敏感地过滤：C#/Java 里用户习惯打小写，而正确符号是 `Console`
+        // ——以前严格 startsWith 会把它整个剔掉，看起来就是「没有补全」。
+        // 排序仍然把「大小写完全一致」的放前面（见 _scoreMatch）。
+        final label = s is LspCompletion ? s.label : s.toString();
+        return label.toLowerCase().startsWith(prefix.toLowerCase());
+      }).toList();
+      }
+      _sortSuggestions(prefix);
+      _suggestionPrefix = prefix;
+      final triggerChar = text[cursorPosition - 1];
+      final isTriggerChar = _isCompletionTriggerChar(triggerChar);
+      final isAlphaChar = _isAlpha(triggerChar);
+      // 「无输入联想」：宿主注入了上下文候选（contextSuggestionProvider）时，
+      // 换行 / 开括号 / 逗号 / 等号 / 分号之后也弹窗——这时 prefix 为空，
+      // 候选完全由宿主按上下文给出（上一行结构、缩进层级、文档里的高频行首词）。
+      final isContextualTrigger = contextSuggestionProvider != null &&
+          prefix.isEmpty &&
+          _suggestions.isNotEmpty &&
+          (triggerChar == '\n' ||
+              triggerChar == '(' ||
+              triggerChar == '{' ||
+              triggerChar == '[' ||
+              triggerChar == ',' ||
+              triggerChar == '=' ||
+              triggerChar == ';');
+
+      if (!isTriggerChar && !isAlphaChar && !isContextualTrigger) {
+        if (!_isDisposed) suggestionsNotifier.value = null;
+        return;
+      }
+      if (!_isDisposed) {
+        // prefix 为空时全量候选（几百个关键字）会淹没上下文候选，只留前 30 条。
+        suggestionsNotifier.value = prefix.isEmpty && _suggestions.length > 30
+            ? _suggestions.take(30).toList()
+            : _suggestions;
+      }
+    } else {
+      if (!_isDisposed) suggestionsNotifier.value = null;
     }
   }
 
