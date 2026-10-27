@@ -4989,7 +4989,9 @@ class CodeForgeController implements DeltaTextInputClient {
         // ——以前严格 startsWith 会把它整个剔掉，看起来就是「没有补全」。
         // 排序仍然把「大小写完全一致」的放前面（见 _scoreMatch）。
         final label = s is LspCompletion ? s.label : s.toString();
-        return label.toLowerCase().startsWith(prefix.toLowerCase());
+        // CamelCase 匹配（VS 的招牌）：`WLi` 能匹配 `WriteLine`。
+        return label.toLowerCase().startsWith(prefix.toLowerCase()) ||
+            _camelMatch(label, prefix);
       }).toList();
       }
       _sortSuggestions(prefix);
@@ -5054,13 +5056,65 @@ class CodeForgeController implements DeltaTextInputClient {
     });
   }
 
+  /// VS 的「CamelCase 匹配」：`WLi` 匹配 `WriteLine`、`gSN` 匹配 `getSimpleName`。
+  ///
+  /// 规则：prefix 的每个字符按顺序在 label 里找同字符，但只允许落在「词首」
+  /// （大写字母 / `_` / `.` / `-` 之后 / 开头），或者紧接着上一个命中继续在本段内匹配。
+  /// prefix 不带大写字母时不启用——否则 `abc` 会把一堆不相干的词拉进来。
+  static bool _camelMatch(String label, String prefix) {
+    if (prefix.isEmpty || label.length < prefix.length) return false;
+    var hasUpper = false;
+    for (var i = 0; i < prefix.length; i++) {
+      final c = prefix.codeUnitAt(i);
+      if (c >= 0x41 && c <= 0x5A) {
+        hasUpper = true;
+        break;
+      }
+    }
+    if (!hasUpper) return false;
+
+    var li = 0;
+    var inSegment = false;
+    for (var pi = 0; pi < prefix.length; pi++) {
+      final pc = prefix[pi].toLowerCase();
+      var matched = false;
+      while (li < label.length) {
+        final lc = label[li];
+        final boundary = _isCamelBoundary(label, li);
+        final hit = lc.toLowerCase() == pc && (boundary || inSegment);
+        li++;
+        if (hit) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) return false;
+      inSegment = true;
+      if (li < label.length && _isCamelBoundary(label, li)) inSegment = false;
+    }
+    return true;
+  }
+
+  static bool _isCamelBoundary(String label, int i) {
+    if (i <= 0) return true;
+    final c = label.codeUnitAt(i);
+    if (c >= 0x41 && c <= 0x5A) return true;
+    final prev = label[i - 1];
+    return prev == '_' || prev == '.' || prev == '-';
+  }
+
   int _scoreMatch(String label, String prefix) {
     if (prefix.isEmpty) return 0;
 
     final lowerLabel = label.toLowerCase();
     final lowerPrefix = prefix.toLowerCase();
 
-    if (!lowerLabel.contains(lowerPrefix)) return -1000000;
+    if (!lowerLabel.contains(lowerPrefix)) {
+      // CamelCase 匹配的候选「包含」判断不成立，但仍然应该出现在列表里，
+      // 排在普通前缀匹配之后、乱七八糟的包含匹配之前。
+      if (_camelMatch(label, prefix)) return 20000 - label.length;
+      return -1000000;
+    }
 
     int score = 0;
 
