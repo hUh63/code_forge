@@ -5677,6 +5677,12 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
       return;
     }
 
+    if (controller.extraHighlightsChanged) {
+      controller.extraHighlightsChanged = false;
+      markNeedsPaint();
+      return;
+    }
+
     if (controller.multiCursorsChanged) {
       controller.multiCursorsChanged = false;
       markNeedsPaint();
@@ -7796,6 +7802,14 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
       hasActiveFolds,
     );
 
+    _drawExtraHighlights(
+      canvas,
+      offset,
+      firstVisibleLine,
+      lastVisibleLine,
+      hasActiveFolds,
+    );
+
     _drawLineDecorations(
       canvas,
       offset,
@@ -9581,6 +9595,114 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
     }
 
     canvas.drawPath(path, paint);
+  }
+
+  /// 宿主自己的参考高亮（括号配对、当前词出现处）。
+  ///
+  /// 与查找高亮分开画：颜色更淡（这是「参考」不是「命中」），而且不参与查找的
+  /// 清空/滚动逻辑。
+  void _drawExtraHighlights(
+    Canvas canvas,
+    Offset offset,
+    int firstVisibleLine,
+    int lastVisibleLine,
+    bool hasActiveFolds,
+  ) {
+    final extras = controller.extraHighlights;
+    if (extras.isEmpty) return;
+
+    final normalPaint = Paint()
+      ..color = const Color(0x2E607D8B)
+      ..style = PaintingStyle.fill;
+    final activePaint = Paint()
+      ..color = const Color(0x55607D8B)
+      ..style = PaintingStyle.fill;
+
+    for (final highlight in extras) {
+      final start = highlight.start;
+      final end = highlight.end;
+      if (end <= start) continue;
+
+      final startLine = controller.getLineAtOffset(start);
+      final endLine = controller.getLineAtOffset(end);
+      if (endLine < firstVisibleLine || startLine > lastVisibleLine) continue;
+
+      final paint = highlight.isCurrentMatch ? activePaint : normalPaint;
+
+      for (var lineIndex = startLine; lineIndex <= endLine; lineIndex++) {
+        if (lineIndex < firstVisibleLine || lineIndex > lastVisibleLine) continue;
+        if (hasActiveFolds && _isLineFolded(lineIndex)) continue;
+
+        final lineStartOffset = controller.getLineStartOffset(lineIndex);
+        final lineText =
+            _lineTextCache[lineIndex] ?? controller.getLineText(lineIndex);
+        final lineLength = lineText.length;
+
+        var lineSelStart = 0;
+        var lineSelEnd = lineLength;
+        if (lineIndex == startLine) lineSelStart = start - lineStartOffset;
+        if (lineIndex == endLine) lineSelEnd = end - lineStartOffset;
+        lineSelStart = lineSelStart.clamp(0, lineLength);
+        lineSelEnd = lineSelEnd.clamp(0, lineLength);
+        if (lineSelStart >= lineSelEnd) continue;
+
+        final contentWidth =
+            size.width - _gutterWidth - (innerPadding?.horizontal ?? 0);
+        final paragraphWidth = lineWrap
+            ? _wrapWidth
+            : (isRTL ? contentWidth : null);
+
+        ui.Paragraph para;
+        if (_paragraphCache.containsKey(lineIndex)) {
+          para = _paragraphCache[lineIndex]!;
+        } else {
+          para = _buildHighlightedParagraph(
+            lineIndex,
+            lineText,
+            width: paragraphWidth,
+          );
+          _paragraphCache[lineIndex] = para;
+        }
+
+        final lineY = _getLineYOffset(lineIndex, hasActiveFolds);
+        final scroll = lineWrap ? 0.0 : _effectiveHScroll;
+        final textX = isRTL
+            ? (innerPadding?.left ?? 0) - scroll
+            : _gutterWidth + (innerPadding?.left ?? 0) - scroll;
+
+        if (lineText.isEmpty) continue;
+
+        final utf16Start = CodeForgeController.scalarToUtf16Offset(
+          lineText,
+          lineSelStart,
+        );
+        final utf16End = CodeForgeController.scalarToUtf16Offset(
+          lineText,
+          lineSelEnd,
+        );
+        final boxes = para.getBoxesForRange(utf16Start, utf16End);
+
+        for (final box in boxes) {
+          final screenX = offset.dx + textX + box.left;
+          final screenY =
+              offset.dy +
+              (innerPadding?.top ?? 0) +
+              lineY +
+              box.top -
+              vscrollController.offset;
+
+          canvas.drawRect(
+            Rect.fromLTWH(
+              screenX,
+              screenY,
+              box.right - box.left,
+              _lineHeight,
+            ),
+            paint,
+          );
+        }
+      }
+    }
   }
 
   void _drawSearchHighlights(

@@ -639,6 +639,15 @@ class CodeForgeController implements DeltaTextInputClient {
   /// Whether the search highlights have changed and need repaint.
   bool searchHighlightsChanged = false;
 
+  /// 宿主自己画的高亮（括号配对、当前词出现处…）。
+  ///
+  /// 单独一条通道：查找用的 [searchHighlights] 会被查找面板反复清空、颜色也很浓，
+  /// 混在一起两边都别扭。
+  List<SearchHighlight> extraHighlights = [];
+
+  /// Whether [extraHighlights] changed and the editor needs repaint.
+  bool extraHighlightsChanged = false;
+
   /// Whether multi-cursor positions have changed and the editor needs repaint.
   bool multiCursorsChanged = false;
 
