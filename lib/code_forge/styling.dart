@@ -538,10 +538,19 @@ class SearchHighlight {
   /// Whether this highlight represents the currently selected match
   final bool isCurrentMatch;
 
+  /// Optional per-highlight fill color.
+  ///
+  /// The host can use this to paint several groups of highlights in different
+  /// colors (e.g. bracket-pair colorization by nesting depth) without needing
+  /// a separate channel per color. When null the default active/normal colors
+  /// are used.
+  final Color? color;
+
   const SearchHighlight({
     required this.start,
     required this.end,
     this.isCurrentMatch = false,
+    this.color,
   });
 }
 

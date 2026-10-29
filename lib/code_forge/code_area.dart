@@ -9617,6 +9617,8 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
     final activePaint = Paint()
       ..color = const Color(0x55607D8B)
       ..style = PaintingStyle.fill;
+    // Reused for highlights that carry their own color (host-side colorization).
+    final customPaint = Paint()..style = PaintingStyle.fill;
 
     for (final highlight in extras) {
       final start = highlight.start;
@@ -9627,7 +9629,10 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
       final endLine = controller.getLineAtOffset(end);
       if (endLine < firstVisibleLine || startLine > lastVisibleLine) continue;
 
-      final paint = highlight.isCurrentMatch ? activePaint : normalPaint;
+      final custom = highlight.color;
+      final paint = custom != null
+          ? (customPaint..color = custom)
+          : (highlight.isCurrentMatch ? activePaint : normalPaint);
 
       for (var lineIndex = startLine; lineIndex <= endLine; lineIndex++) {
         if (lineIndex < firstVisibleLine || lineIndex > lastVisibleLine) continue;
