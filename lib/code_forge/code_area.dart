@@ -983,6 +983,35 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
     }
   }
 
+  /// Renders one suggestion label, with an optional caption supplied by the host.
+  ///
+  /// The caption is deliberately small and dim: it is secondary information and
+  /// must never push the label itself into an ellipsis on narrow screens.
+  Widget _suggestionLabelText(String label) {
+    final base =
+        _suggestionStyle.labelTextStyle ?? _suggestionStyle.textStyle;
+    final detail = _controller.suggestionDetails[label];
+    if (detail == null || detail.isEmpty) {
+      return Text(label, style: base, overflow: TextOverflow.ellipsis);
+    }
+    final small = base.copyWith(
+      fontSize: (base.fontSize ?? 14) * 0.78,
+      color: base.color?.withValues(alpha: 0.5),
+    );
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: label),
+          TextSpan(text: '  ' + detail, style: small),
+        ],
+      ),
+      style: base,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
   String _getSuggestionCacheKey(dynamic item) {
     if (item is LspCompletion) {
       final map = item.completionItem;
@@ -3610,17 +3639,10 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
                                                       ],
                                                       if (item is String)
                                                         Expanded(
-                                                          child: Text(
-                                                            item,
-                                                            style:
-                                                                _suggestionStyle
-                                                                    .labelTextStyle ??
-                                                                _suggestionStyle
-                                                                    .textStyle,
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis,
-                                                          ),
+                                                          child:
+                                                              _suggestionLabelText(
+                                                                item,
+                                                              ),
                                                         ),
                                                     ],
                                                   ),

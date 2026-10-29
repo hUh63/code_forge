@@ -97,6 +97,14 @@ class CodeForgeController implements DeltaTextInputClient {
   /// 仅在 [enableLocalSuggestions] 为 true 时生效。
   List<String> extraSuggestions = const [];
 
+  /// Optional short caption per suggestion label (e.g. "keyword", "built-in").
+  ///
+  /// The kernel has no idea whether a word is a language keyword or a library
+  /// function - only the host knows. Labels without an entry render without a
+  /// caption, which is exactly what we want for words picked up from the
+  /// document itself.
+  Map<String, String> suggestionDetails = const {};
+
   /// 宿主注入的「上下文感知」候选回调。
   ///
   /// 与 [extraSuggestions] 的区别是它**每次补齐候选前按需回调**，因此能拿到光标
