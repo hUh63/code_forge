@@ -8164,6 +8164,36 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
           );
         }
       }
+
+      // 多选区（矩形选区 / 多位置替换）：整段上底色。
+      // 画在光标之后：底色先铺、光标压在上面才看得见。
+      if (controller.hasMultiSelections) {
+        final selPaint = Paint()..color = selectionStyle.selectionColor;
+        final textLen = controller.text.length;
+        for (final sel in controller.multiSelections) {
+          for (var line = 0; line < controller.lineCount; line++) {
+            final ls = controller.getLineStartOffset(line);
+            final le = line + 1 < controller.lineCount
+                ? controller.getLineStartOffset(line + 1)
+                : textLen;
+            if (le <= sel.$1 || ls >= sel.$2) continue;
+            final a = sel.$1 > ls ? sel.$1 : ls;
+            final b = sel.$2 < le ? sel.$2 : le;
+            if (b <= a) continue;
+            final ia = _getCaretInfoAtOffset(a);
+            final ib = _getCaretInfoAtOffset(b);
+            final w = ib.offset.dx - ia.offset.dx;
+            if (w <= 0) continue;
+            final x = offset.dx + textX + ia.offset.dx;
+            final y =
+                offset.dy +
+                (innerPadding?.top ?? 0) +
+                ia.offset.dy -
+                vscrollController.offset;
+            canvas.drawRect(Rect.fromLTWH(x, y, w, ia.height), selPaint);
+          }
+        }
+      }
     }
 
     if (isMobile) {

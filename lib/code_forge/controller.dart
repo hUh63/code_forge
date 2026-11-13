@@ -45,6 +45,13 @@ class CodeForgeController implements DeltaTextInputClient {
   final List<LineDecoration> _lineDecorations = [];
   final List<GutterDecoration> _gutterDecorations = [];
   final List<({int line, int character})> _multiCursors = [];
+
+  /// 多选区：每项是绝对偏移区间 `(start, end)`，要求 `end > start`。
+  ///
+  /// 与 [_multiCursors]（只有插入点）的区别是「要替换掉这一段」——
+  /// 矩形选区、多位置同时替换都靠它。编辑分发见
+  /// [_insertReplacingMultiSelections] 与 [_deleteMultiSelections]。
+  final List<(int, int)> _multiSelections = [];
   final List<Map<String, dynamic>> _pendingLspContentChanges = [];
   final List<VirtualRemovedBlock> _virtualRemovedBlocks = [];
   void Function(int lineNumber)? _toggleFoldCallback;
@@ -666,6 +673,14 @@ class CodeForgeController implements DeltaTextInputClient {
   /// Whether there are active secondary cursors.
   bool get hasMultiCursors => _multiCursors.isNotEmpty;
 
+  bool get hasMultiSelections => _multiSelections.isNotEmpty;
+
+  List<(int, int)> get multiSelections => List.unmodifiable(_multiSelections);
+
+  /// 有没有「多光标或多选区」——两者共用同一套编辑分发。
+  bool get hasMultiEditing =>
+      _multiCursors.isNotEmpty || _multiSelections.isNotEmpty;
+
   /// Whether inlay hints have changed and need repaint
   bool inlayHintsChanged = false;
 
@@ -746,6 +761,138 @@ class CodeForgeController implements DeltaTextInputClient {
   void clearMultiCursors() {
     if (_multiCursors.isEmpty) return;
     _multiCursors.clear();
+    multiCursorsChanged = true;
+    notifyListeners();
+  }
+
+  void addMultiSelection(int start, int end) {
+    final len = _rope.length;
+    var a = start.clamp(0, len);
+    var b = end.clamp(0, len);
+    if (a > b) {
+      final t = a;
+      a = b;
+      b = t;
+    }
+    if (a == b) return;
+    for (final s in _multiSelections) {
+      if (s.$1 == a && s.$2 == b) return;
+    }
+    _multiSelections.add((a, b));
+    _multiSelections.sort((x, y) => x.$1.compareTo(y.$1));
+    multiCursorsChanged = true;
+    notifyListeners();
+  }
+
+  void clearMultiSelections() {
+    if (_multiSelections.isEmpty) return;
+    _multiSelections.clear();
+    multiCursorsChanged = true;
+    notifyListeners();
+  }
+
+  /// 所有编辑目标：主选区、多光标、多选区，归一成 `(start, end)` 并按起点升序，
+  /// 顺带去掉与前一段重叠的（重叠替换会把文本搅乱）。
+  List<(int, int)> _editTargets() {
+    final len = _rope.length;
+    final out = <(int, int)>[];
+    final sel = _selection;
+    if (sel.isValid && !sel.isCollapsed) {
+      final a = sel.start.clamp(0, len);
+      final b = sel.end.clamp(0, len);
+      out.add(a <= b ? (a, b) : (b, a));
+    } else {
+      final o = sel.extentOffset.clamp(0, len);
+      out.add((o, o));
+    }
+    for (final c in _multiCursors) {
+      final o = _multiCursorToOffset(c).clamp(0, len);
+      out.add((o, o));
+    }
+    out.addAll(_multiSelections);
+    out.sort((x, y) => x.$1.compareTo(y.$1));
+    final merged = <(int, int)>[];
+    for (final t in out) {
+      if (merged.isNotEmpty && t.$1 < merged.last.$2) continue;
+      merged.add(t);
+    }
+    return merged;
+  }
+
+  /// 多选区 + 输入：先删掉各选区内容，再在原位插入文本。
+  ///
+  /// 单独实现而不复用 [insertAtAllCursors]：后者是多光标那条已经跑熟的路径，
+  /// 多选区要「先删后插」，混进去改风险大。
+  void _insertReplacingMultiSelections(String text) {
+    _flushBuffer();
+    final selectionBefore = _selection;
+    final targets = _editTargets();
+    if (targets.isEmpty) return;
+    final compound = _undoController?.beginCompoundOperation();
+    for (final t in targets.reversed) {
+      if (t.$2 > t.$1) {
+        _rope.delete(t.$1, t.$2);
+        _currentVersion++;
+      }
+      _rope.insert(t.$1, text);
+      _currentVersion++;
+      _recordInsertion(
+        t.$1,
+        text,
+        selectionBefore,
+        TextSelection.collapsed(offset: t.$1 + text.length),
+      );
+    }
+    compound?.end();
+    // 替换后偏移全变了，多选区/多光标留着只会错位，一起收掉。
+    _multiSelections.clear();
+    _multiCursors.clear();
+    _selection = TextSelection.collapsed(
+      offset: (targets.first.$1 + text.length).clamp(0, _rope.length),
+    );
+    dirtyRegion = TextRange(start: 0, end: _rope.length);
+    _scheduleSyncToConnection();
+    multiCursorsChanged = true;
+    notifyListeners();
+  }
+
+  /// 多选区 + 退格/删除：选区非空就删整段，空区间退化成删一个字符。
+  void _deleteMultiSelections({required bool forward}) {
+    _flushBuffer();
+    final selectionBefore = _selection;
+    final targets = _editTargets();
+    if (targets.isEmpty) return;
+    final compound = _undoController?.beginCompoundOperation();
+    for (final t in targets.reversed) {
+      var a = t.$1;
+      var b = t.$2;
+      if (b <= a) {
+        if (forward) {
+          if (a >= _rope.length) continue;
+          b = a + 1;
+        } else {
+          if (a <= 0) continue;
+          a = a - 1;
+        }
+      }
+      final deleted = _rope.substring(a, b);
+      _rope.delete(a, b);
+      _currentVersion++;
+      _recordDeletion(
+        a,
+        deleted,
+        selectionBefore,
+        TextSelection.collapsed(offset: a),
+      );
+    }
+    compound?.end();
+    _multiSelections.clear();
+    _multiCursors.clear();
+    _selection = TextSelection.collapsed(
+      offset: targets.first.$1.clamp(0, _rope.length),
+    );
+    dirtyRegion = TextRange(start: 0, end: _rope.length);
+    _scheduleSyncToConnection();
     multiCursorsChanged = true;
     notifyListeners();
   }
@@ -5398,6 +5545,12 @@ class CodeForgeController implements DeltaTextInputClient {
   ) {
     if (_undoController?.isUndoRedoInProgress ?? false) return;
 
+    // 多选区优先：它要「先删掉选中段再插入」，和多光标的纯插入不是一回事。
+    if (hasMultiSelections && insertedText.isNotEmpty) {
+      _insertReplacingMultiSelections(insertedText);
+      return;
+    }
+
     if (hasMultiCursors &&
         insertedText.isNotEmpty &&
         !insertedText.contains('\n')) {
@@ -5640,6 +5793,13 @@ class CodeForgeController implements DeltaTextInputClient {
 
   void _handleDeletion(TextRange range, TextSelection newSelection) {
     if (_undoController?.isUndoRedoInProgress ?? false) return;
+
+    if (hasMultiSelections) {
+      _deleteMultiSelections(
+        forward: range.start >= _selection.extentOffset,
+      );
+      return;
+    }
 
     if (hasMultiCursors &&
         range.end - range.start == 1 &&
