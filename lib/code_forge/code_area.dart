@@ -2655,6 +2655,12 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
                                                       }
 
                                                       if (_controller
+                                                          .hasMultiSelections) {
+                                                        _controller
+                                                            .deleteMultiSelections(
+                                                              forward: false,
+                                                            );
+                                                      } else if (_controller
                                                           .hasMultiCursors) {
                                                         _controller
                                                             .backspaceAtAllCursors();
@@ -2680,6 +2686,12 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
                                                             .handled;
                                                       }
                                                       if (_controller
+                                                          .hasMultiSelections) {
+                                                        _controller
+                                                            .deleteMultiSelections(
+                                                              forward: true,
+                                                            );
+                                                      } else if (_controller
                                                           .hasMultiCursors) {
                                                         _controller
                                                             .deleteAtAllCursors();

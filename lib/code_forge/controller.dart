@@ -865,7 +865,11 @@ class CodeForgeController implements DeltaTextInputClient {
   }
 
   /// 多选区 + 退格/删除：选区非空就删整段，空区间退化成删一个字符。
-  void _deleteMultiSelections({required bool forward}) {
+  /// 多选区 + 退格/删除（`forward: true` 是 Delete 键，false 是 Backspace）。
+  ///
+  /// 公开是因为物理键盘的 backspace/delete 在 code_area 里直接分发，
+  /// 不走 [_handleDeletion]。
+  void deleteMultiSelections({required bool forward}) {
     _flushBuffer();
     final selectionBefore = _selection;
     final targets = _editTargets();
@@ -5803,7 +5807,7 @@ class CodeForgeController implements DeltaTextInputClient {
     if (_undoController?.isUndoRedoInProgress ?? false) return;
 
     if (hasMultiSelections) {
-      _deleteMultiSelections(
+      deleteMultiSelections(
         forward: range.start >= _selection.extentOffset,
       );
       return;
