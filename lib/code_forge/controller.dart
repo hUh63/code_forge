@@ -796,20 +796,28 @@ class CodeForgeController implements DeltaTextInputClient {
   List<(int, int)> _editTargets() {
     final len = _rope.length;
     final out = <(int, int)>[];
-    final sel = _selection;
-    if (sel.isValid && !sel.isCollapsed) {
-      final a = sel.start.clamp(0, len);
-      final b = sel.end.clamp(0, len);
-      out.add(a <= b ? (a, b) : (b, a));
+    if (_multiSelections.isNotEmpty) {
+      // 多选区存在时**独占**：此时主光标/多光标的位置都是块选留下的产物
+      // （通常正好落在某一行的选区边界上），算进来就会和矩形区间重叠，
+      // 同一处被替换两次。
+      for (final s in _multiSelections) {
+        out.add((s.$1.clamp(0, len), s.$2.clamp(0, len)));
+      }
     } else {
-      final o = sel.extentOffset.clamp(0, len);
-      out.add((o, o));
+      final sel = _selection;
+      if (sel.isValid && !sel.isCollapsed) {
+        final a = sel.start.clamp(0, len);
+        final b = sel.end.clamp(0, len);
+        out.add(a <= b ? (a, b) : (b, a));
+      } else {
+        final o = sel.extentOffset.clamp(0, len);
+        out.add((o, o));
+      }
+      for (final c in _multiCursors) {
+        final o = _multiCursorToOffset(c).clamp(0, len);
+        out.add((o, o));
+      }
     }
-    for (final c in _multiCursors) {
-      final o = _multiCursorToOffset(c).clamp(0, len);
-      out.add((o, o));
-    }
-    out.addAll(_multiSelections);
     out.sort((x, y) => x.$1.compareTo(y.$1));
     final merged = <(int, int)>[];
     for (final t in out) {
