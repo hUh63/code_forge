@@ -1536,8 +1536,13 @@ class CodeForgeController implements DeltaTextInputClient {
   ///
   /// Use this method if you want to provide custom inlay hints
   /// instead of fetching them from the LSP server.
+  ///
+  /// The hints stay visible while the list is non-empty — they are persistent
+  /// annotations, unlike [showInlayHints] which is a temporary read-only peek.
+  /// Passing an empty list hides them again.
   void setInlayHints(List<InlayHint> hints) {
     _inlayHints = hints;
+    _inlayHintsVisible = hints.isNotEmpty;
     inlayHintsChanged = true;
     notifyListeners();
   }
