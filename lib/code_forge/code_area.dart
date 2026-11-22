@@ -2803,6 +2803,8 @@ class _CodeForgeState extends State<CodeForge> with TickerProviderStateMixin {
                                                               .isReplaceMode =
                                                           false;
                                                       _aiNotifier.value = null;
+                                                      _controller
+                                                          .clearGhostText();
                                                       _suggestionNotifier
                                                               .value =
                                                           null;
