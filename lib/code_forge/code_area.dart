@@ -4625,6 +4625,9 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
   bool _caretSyncAfterLayoutScheduled = false;
   TextDirection _textDirection;
   Map<int, FoldRange>? _lastLspFoldRanges;
+
+  /// 宿主注入的折叠范围（`#region` 等）上一版，用来发现「宿主重设了」。
+  Map<int, FoldRange>? _lastCustomFoldRanges;
   Rect? _startHandleRect, _endHandleRect, _normalHandle;
   double _longLineWidth = 0.0, _wrapWidth = double.infinity;
   List<double> _wrappedHeightDeltas = const [];
@@ -5628,7 +5631,35 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
     });
   }
 
+  /// 把宿主注入的范围并入 [_foldRanges]，让「折叠全部/展开全部」也覆盖它们。
+  void _mergeCustomFoldsIntoCache() {
+    final custom = controller.customFoldRanges;
+    if (custom == null || custom.isEmpty) return;
+    _foldRanges.addAll(custom);
+  }
+
+  /// 宿主换了自定义折叠范围：只清掉这些行上的缓存，用户的折叠状态不受影响。
+  void _syncCustomFoldRanges() {
+    final next = controller.customFoldRanges;
+    if (identical(next, _lastCustomFoldRanges)) return;
+    final old = _lastCustomFoldRanges;
+    _lastCustomFoldRanges = next;
+    if (old != null) {
+      for (final key in old.keys) {
+        _foldRanges.remove(key);
+      }
+    }
+    if (next != null) {
+      for (final key in next.keys) {
+        _foldRanges.remove(key);
+      }
+    }
+    _foldedLineCacheDirty = true;
+    markNeedsPaint();
+  }
+
   void _onControllerChange() {
+    _syncCustomFoldRanges();
     if (controller.lspFoldRanges != _lastLspFoldRanges) {
       _lastLspFoldRanges = controller.lspFoldRanges;
 
@@ -6306,6 +6337,17 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
   }
 
   FoldRange? _getOrComputeFoldRange(int lineIndex) {
+    // 宿主注入的范围优先级最高（`#region` 这类标记所在的整行往往既没有括号
+    // 也不以 `:` 结尾，内置算法根本认不出来）。
+    final custom = controller.customFoldRanges;
+    if (custom != null) {
+      final injected = custom[lineIndex];
+      if (injected != null) {
+        _foldRanges[lineIndex] = injected;
+        return injected;
+      }
+    }
+
     if (_foldRangesNeedsClear) {
       _invalidateFoldRanges();
       _foldRangesNeedsClear = false;
@@ -6335,6 +6377,7 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
   }
 
   void _toggleFold(FoldRange fold) {
+    _mergeCustomFoldsIntoCache();
     try {
       _isFoldToggleInProgress = true;
       if (fold.isFolded) {
@@ -6400,6 +6443,7 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
   }
 
   void _applyFoldAll() {
+    _mergeCustomFoldsIntoCache();
     for (final fold in _foldRanges.values.where((f) => f != null)) {
       if (!fold!.isFolded) {
         final isNested = _foldRanges.values.any(
@@ -6437,6 +6481,7 @@ class _CodeFieldRenderer extends RenderBox implements MouseTrackerAnnotation {
   void _unfoldAllRanges() {
     if (!enableFolding) return;
     _isFoldToggleInProgress = true;
+    _mergeCustomFoldsIntoCache();
 
     for (final fold in _foldRanges.values.where((f) => f != null)) {
       if (fold!.isFolded) {

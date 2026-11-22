@@ -140,6 +140,9 @@ class CodeForgeController implements DeltaTextInputClient {
   Set<String> _wordCache = {};
   GhostText? _ghostText;
   Map<int, FoldRange>? _lspFoldRanges;
+
+  /// See [customFoldRanges].
+  Map<int, FoldRange>? _customFoldRanges;
   String? _activeCompletionKey;
   ({String filePath, String prefix, int line, int character})?
   _queuedCompletionRequest;
@@ -725,6 +728,24 @@ class CodeForgeController implements DeltaTextInputClient {
   /// Returns true if LSP fold ranges were adjusted (not fetched fresh).
   /// When true, the render object should not clear its fold cache.
   bool get lspFoldRangesWereAdjusted => _lspFoldRangesAdjustedNotFetched;
+
+  /// Host-supplied fold ranges (e.g. `#region` / `#endregion` markers).
+  ///
+  /// Unlike [lspFoldRanges] these are *additive*: the render object returns them
+  /// for a line when present and otherwise falls back to the built-in
+  /// brace/indent/tag algorithm, so ordinary folding keeps working.
+  ///
+  /// The [FoldRange] instances are shared with the editor: the fold state
+  /// ([FoldRange.isFolded]) is toggled in place, so a host that rebuilds the map
+  /// must carry `isFolded` over from the previous instance.
+  Map<int, FoldRange>? get customFoldRanges => _customFoldRanges;
+
+  /// Replaces the host-supplied fold ranges; pass null to remove them again.
+  void setCustomFoldRanges(Map<int, FoldRange>? ranges) {
+    if (identical(_customFoldRanges, ranges)) return;
+    _customFoldRanges = ranges;
+    notifyListeners();
+  }
 
   /// Returns the index of the currently selected seuggestion if an LSP/normal suggestion is available.
   ///
